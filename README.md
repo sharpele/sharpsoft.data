@@ -4,25 +4,7 @@
 //HOW TO USE?
 
             string sql =
-                @"
-if 1>2{
-select switch(a){1:'aaa',2:'bbb',default:null}
-}
-else if(2>3)
-select  switch(b){1:111,2:222,default:555}
-else
-select  switch(b){1:111,2:222,default:555}
-
-declare @wwww varchar(12);
-select a.* ,a.dd,a,ff,12 as ddd,b.* as d from a,(select * from c) as b
-join c on a.f1==c.f1
-left join d on d.f1==c.f1
-full join (select * from table1) as f on a.f2==f.f2
-where a.id==1 and exists(select * from gg)
-group by a.id,a.id1,a.id2
-having b.ggggg==d.ggg
-order by a.id asc,b.id desc
-union all
+                @"if 1>2{select switch(a){1:'aaa',2:'bbb',default:null}}else if(2>3)select  switch(b){1:111,2:222,default:555}else select  switch(b){1:111,2:222,default:555};declare @wwww varchar(12);select a.* ,a.dd,a,ff,12 as ddd,b.* as d from a,(select * from c) as b join c on a.f1==c.f1 left join d on d.f1==c.f1 full join (select * from table1) as f on a.f2==f.f2 where a.id==1 and exists(select * from gg) group by a.id,a.id1,a.id2 having b.ggggg==d.ggg order by a.id asc,b.id desc union all
 select * from xxxxx limit 2,10
 delete t1 from t1,t2 
 join s on s.f1==t1.f1
