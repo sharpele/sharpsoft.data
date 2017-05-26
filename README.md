@@ -32,7 +32,11 @@ INSERT INTO TABLE2 VALUES(1,2,3,4,'5')
 UPDATE TABLE3 SET F1=@PARA,F2=12*45+45*MAX(1,2,3,4,5)
 WHERE TABLE3.ID==2
 ";
+
             TSQLParser SP = new TSQLParser(sql); 
+            
             List<IStatement> l = SP.ReadStatements();//得到解析后的语法树
+            
             MsSql ms = new MsSql("Data Source=.;User ID=sa;Password=123456;");
+            
             string tsql = ms.Setting().Generate(l.ToArray());//将语法树翻译到对应的目标数据库，得到适用的SQL指令
