@@ -160,49 +160,59 @@ namespace SharpSoft.Data.Lexing
                 c = cur;
             }
         }
-        private Token token(TokenType type, string content)
+        private Token token(TokenType type, string content, int pos)
         {
-            return new Token(type, content) { Position = cursor };
+            return new Token(type, content) { Position = pos };
         }
         public Token ReadToken()
         {
             SkipWhiteSpace();
-
+            int startPos = cursor;
+            var com = readComments();
+            if (com != null)
+            {
+                return com;
+            }
             char c = cur;
             if (c == '(' || c == ')')
             {
                 Next();
-                return token(TokenType.Parenthese, c.ToString());
+                return token(TokenType.Bracket, c.ToString(), startPos);
             }
             else if (c == '[' || c == ']')
             {
                 Next();
-                return token(TokenType.Bracket, c.ToString());
+                return token(TokenType.Bracket, c.ToString(), startPos);
             }
             else if (c == '{' || c == '}')
             {
                 Next();
-                return token(TokenType.CurlyBracket, c.ToString());
+                return token(TokenType.Bracket, c.ToString(), startPos);
             }
             else if (c == ',')
             {
                 Next();
-                return token(TokenType.Comma, c.ToString());
+                return token(TokenType.Comma, c.ToString(), startPos);
             }
             else if (c == ':')
             {
                 Next();
-                return token(TokenType.Colon, c.ToString());
+                return token(TokenType.Colon, c.ToString(), startPos);
             }
             else if (c == '?')
             {
                 Next();
-                return token(TokenType.Question, c.ToString());
+                return token(TokenType.Question, c.ToString(), startPos);
             }
             else if (c == ';')
             {
                 Next();
-                return token(TokenType.Semicolon, c.ToString());
+                return token(TokenType.Semicolon, c.ToString(), startPos);
+            }
+            else if (c == '`')
+            {
+                Next();
+                return token(TokenType .Confine, c.ToString(), startPos);
             }
             else if (c == _setting.StringSign)
             {
@@ -210,7 +220,7 @@ namespace SharpSoft.Data.Lexing
             }
             else if (c == '\0')
             {
-                return token(TokenType.End, "\0");
+                return token(TokenType.End, "\0", startPos);
             }
             else if (char.IsDigit(c))
             {//为数字
@@ -234,11 +244,6 @@ namespace SharpSoft.Data.Lexing
             }
             else
             {
-                var com = readComments();
-                if (com != null)
-                {
-                    return com;
-                }
                 ex("语法错误，在当前位置不可识别的字符：[" + c + "]");
             }
 
@@ -264,6 +269,7 @@ namespace SharpSoft.Data.Lexing
 
         private Token readComments()
         {
+            int startPos = cursor;
             var com = _setting.OutlineCommentsSign;
             StringBuilder sb = new StringBuilder(20);
             if (matchText(com))
@@ -276,7 +282,7 @@ namespace SharpSoft.Data.Lexing
                     Next();
                     c = cur;
                 }
-                return token(TokenType.Comments, sb.ToString());
+                return token(TokenType.Comments, sb.ToString(), startPos);
             }
             if (matchText(_setting.InlineCommentsStartSign))
             {//行内注释开始
@@ -295,7 +301,7 @@ namespace SharpSoft.Data.Lexing
                         if (matchText(_setting.InlineCommentsEndSign))
                         {//行内注释结束
                             Next(_setting.InlineCommentsEndSign.Length);
-                            return token(TokenType.Comments, sb.ToString());
+                            return token(TokenType.Comments, sb.ToString(), startPos);
                         }
                     }
                     sb.Append(c);
@@ -337,7 +343,8 @@ namespace SharpSoft.Data.Lexing
         {
             if (_setting.IgnoreCase)
             {//忽略大小写
-                return string.Compare(c1.ToString(), c2.ToString(), true) == 0;
+                return c1.ToString().ToUpper() == c2.ToString().ToUpper();
+                //return string.Compare(c1.ToString(), c2.ToString(), true) == 0;
             }
             else
             {
@@ -350,6 +357,7 @@ namespace SharpSoft.Data.Lexing
         /// <returns></returns>
         private Token readOperator()
         {
+            int startPos = cursor;
             StringBuilder sb = new StringBuilder(2);
             var c = cur;
             if (Operators != null)
@@ -359,7 +367,7 @@ namespace SharpSoft.Data.Lexing
                     if (matchText(item))
                     {
                         Next(item.Length);
-                        return token(TokenType.Operator, item);
+                        return token(TokenType.Operator, item, startPos);
                     }
                 }
             }
@@ -371,6 +379,7 @@ namespace SharpSoft.Data.Lexing
         /// <returns></returns>
         private Token readCustomOperator()
         {
+            int startPos = cursor;
             StringBuilder sb = new StringBuilder(6);
             if (_setting.CustomOperators != null)
             {
@@ -379,7 +388,7 @@ namespace SharpSoft.Data.Lexing
                     if (matchText(item) && !isLiteral(Preview(item.Length)))
                     {
                         Next(item.Length);
-                        return token(TokenType.Operator, item);
+                        return token(TokenType.Operator, item, startPos);
                     }
                 }
             }
@@ -391,6 +400,7 @@ namespace SharpSoft.Data.Lexing
         /// <returns></returns>
         private Token readKeyword()
         {
+            int startPos = cursor;
             StringBuilder sb = new StringBuilder(6);
             if (_setting.Keywords != null)
             {
@@ -399,7 +409,7 @@ namespace SharpSoft.Data.Lexing
                     if (matchText(item) && !isLiteral(Preview(item.Length)))
                     {//完整匹配关键字并且关键字不是其他标识符的一部分
                         Next(item.Length);
-                        return token(TokenType.Keyword, item);
+                        return token(TokenType.Keyword, item, startPos);
                     }
                 }
             }
@@ -408,6 +418,7 @@ namespace SharpSoft.Data.Lexing
         //读取一个数字
         private Token readNumeric()
         {
+            int startPos = cursor;
             StringBuilder sb = new StringBuilder(5);
             var c = cur;
             bool dotexists = false;//是否已经存在小数点
@@ -425,7 +436,7 @@ namespace SharpSoft.Data.Lexing
                 Next();
                 c = cur;
             }
-            return token(TokenType.Numeric, sb.ToString());
+            return token(TokenType.Numeric, sb.ToString(), startPos);
         }
         /// <summary>
         /// 读取文字，包括关键字、表名、列名、函数名等。
@@ -433,6 +444,7 @@ namespace SharpSoft.Data.Lexing
         /// <returns></returns>
         private Token readLiteral()
         {
+            int startPos = cursor;
             StringBuilder sb = new StringBuilder(10);
             var c = cur;
             while (isLiteral(c) || isLiteralFirst(c))
@@ -441,7 +453,7 @@ namespace SharpSoft.Data.Lexing
                 Next();
                 c = cur;
             }
-            return token(TokenType.Literal, sb.ToString());
+            return token(TokenType.Literal, sb.ToString(), startPos);
         }
         /// <summary>
         /// 读取一段字符串
@@ -449,6 +461,7 @@ namespace SharpSoft.Data.Lexing
         /// <returns></returns>
         private Token readString()
         {
+            int startPos = cursor;
             StringBuilder sb = new StringBuilder(10);
             Next();//跳过字符串的开头标识
             char c = cur;
@@ -481,7 +494,7 @@ namespace SharpSoft.Data.Lexing
             }
             throw new Exception("读取一段字符串时发生异常：未发现字符串结束标识。");
             end:
-            return token(TokenType.String, sb.ToString());
+            return token(TokenType.String, sb.ToString(), startPos);
         }
 
     }

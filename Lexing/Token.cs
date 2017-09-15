@@ -15,6 +15,17 @@ namespace SharpSoft.Data.Lexing
         public string Content { get; set; }
 
         public int Position { get;internal set; }
+        public bool MatchToken(TokenType type, string content = null)
+        {
+            if (content == null)
+            {
+                return Type == type;
+            }
+            else
+            {
+                return Type == type && Content == content;
+            }
+        }
         public override string ToString()
         {
             return $"{Type}:[{(Content=="\0"?"\\0":Content)}] Position:{Position}";
@@ -23,25 +34,21 @@ namespace SharpSoft.Data.Lexing
     public enum TokenType
     {
         /// <summary>
+        /// 限制符，常用于强制引用关键字作为变量名。
+        /// </summary>
+        Confine,
+        /// <summary>
         /// 文字
         /// </summary>
         Literal,
         /// <summary>
         /// 保留关键字
         /// </summary>
-        Keyword,
+        Keyword, 
         /// <summary>
-        /// 圆括号
+        /// 括号
         /// </summary>
-        Parenthese,
-        /// <summary>
-        /// 方括号
-        /// </summary>
-        Bracket,
-        /// <summary>
-        /// 花括号
-        /// </summary>
-        CurlyBracket,
+        Bracket, 
         /// <summary>
         /// 逗号
         /// </summary>

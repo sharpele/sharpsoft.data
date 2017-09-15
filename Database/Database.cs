@@ -9,25 +9,56 @@ using Newtonsoft.Json.Linq;
 
 namespace SharpSoft.Data
 {
+    using GSQL;
+
     /// <summary>
     /// 用于管理数据库连接，以及提供一套同一的数据库操作方法
     /// </summary>
-    public abstract class Database
+    public abstract class Database : IDisposable
     {
         #region Base
         private DbTransaction transaction = null;//当前正在执行的事务
-        private DbConnection conn = null;
+        private readonly
+            DbConnection conn = null;
         private DbProviderFactory factory = null;
-        public Database(DbProviderFactory p_factory, string p_connstr) : this(p_factory)
+        protected Database(DbProviderFactory p_factory, string p_connstr) : this(p_factory)
         {
             conn.ConnectionString = p_connstr;
         }
-        public Database(DbProviderFactory p_factory)
+        protected Database(DbProviderFactory p_factory)
         {
             factory = p_factory;
             conn = factory.CreateConnection();
+
+            sqlTextGenerator = SQLTextGenerator();
+            if (sqlTextGenerator==null)
+            {
+                throw new Exception("当前数据库对象未指定SQLTextGenerator。");
+            }
         }
-        public abstract TSqlSetting Setting();
+        protected readonly SQLTextGenerator sqlTextGenerator;
+        /// <summary>
+        /// 在派生类中实现为当前数据库生成SQL脚本
+        /// </summary>
+        /// <returns></returns>
+        protected abstract SQLTextGenerator SQLTextGenerator(); 
+        /// <summary>
+        /// 根据指定的数据库类型名称和连接字符串创建数据库实例。
+        /// </summary>
+        /// <param name="dbtype"></param>
+        /// <param name="connstr"></param>
+        /// <returns></returns>
+        public static Database Create(string dbtype, string connstr)
+        {
+            var t = Type.GetType(dbtype);
+            if (t == null)
+            {
+                throw new NotSupportedException($"database type \"{dbtype}\" not founded.please check the typename.");
+            }
+            var ci = t.GetConstructor(new Type[] { typeof(string) });
+            var obj = ci.Invoke(new object[] { connstr });
+            return (Database)obj;
+        }
 
         /// <summary>
         /// 获取或设置当前数据库的连接字符串
@@ -37,6 +68,8 @@ namespace SharpSoft.Data
             get { return conn.ConnectionString; }
             set { conn.ConnectionString = value; }
         }
+
+        public int ConnectionTimeout { get { return conn.ConnectionTimeout; } }
         /// <summary>
         /// 是否在执行完毕后关闭数据连接
         /// </summary>
@@ -96,47 +129,109 @@ namespace SharpSoft.Data
             }
             return cmd;
         }
-        protected DbCommand CreateCommand(string p_cmdstr)
+        protected DbCommand CreateCommand(string sql)
         {
             DbCommand cmd = CreateCommand();
-            cmd.CommandText = p_cmdstr;
+            cmd.CommandText = sql;
             return cmd;
         }
-        protected DbCommand CreateCommand(string p_cmdstr, IDictionary<string, object> paras)
+        protected virtual DbParameter processParameter(DbCommand cmd, string name, object value)
         {
-            DbCommand cmd = CreateCommand(p_cmdstr);
+            if (!name.StartsWith("@"))
+            {
+                name = "@" + name;
+            }
+
+            DbParameter para = cmd.CreateParameter();
+            para.ParameterName = name;
+            if (value is LikeParameter lp)
+            {
+                string temp = "{0}";
+                switch (lp.Mode)
+                {
+                    case LikeMode.Contains:
+                        temp = "%{0}%";
+                        break;
+                    case LikeMode.StartWith:
+                        temp = "{0}%";
+                        break;
+                    case LikeMode.EndWith:
+                        temp = "%{0}";
+                        break;
+                    default:
+                        break;
+                }
+
+                para.Value = string.Format(temp, lp.Value);
+            }
+            else if (value is InParameter inp)
+            {
+                List<string> l = new List<string>();
+                //var setting = Setting();
+                //foreach (var item in inp.Paras)
+                //{
+                //    switch (item)
+                //    {
+                //        case SByte sbyt:
+                //        case Byte byt:
+                //        case ushort usho:
+                //        case short sho:
+                //        case int i:
+                //        case uint ui:
+                //        case long lon:
+                //        case ulong ulon:
+                //        case float f:
+                //        case double dou:
+                //        case decimal dec:
+                //            l.Add(setting.Numeric(item.ToString()));
+                //            break;
+                //        case bool boo:
+                //            l.Add(setting.Boolean(boo ? (IBoolean)True.Value : (IBoolean)False.Value));
+                //            break;
+                //        case string str:
+                //            l.Add(setting.String(str));
+                //            break;
+                //        default:
+                //            l.Add(setting.String(item.ToString()));
+                //            break;
+                //    }
+                //}
+                para.Value = $"({string.Join(",", l.ToArray())})";
+            }
+            else
+            {
+                para.Value = value;
+            }
+            return para;
+        }
+        protected DbCommand CreateCommand(string sql, IDictionary<string, object> paras)
+        {
+            DbCommand cmd = CreateCommand(sql);
             if (paras != null)
             {
                 foreach (var item in paras)
                 {
                     string pname = item.Key;
-                    if (pname.StartsWith("@"))
-                    {
-                        pname = "@" + pname;
-                    }
-                    DbParameter para = cmd.CreateParameter();
-                    para.ParameterName = pname;
-                    para.Value = item.Value;
-                    cmd.Parameters.Add(para);
+                    cmd.Parameters.Add(processParameter(cmd, pname, item.Value));
                 }
             }
             return cmd;
         }
-        protected DbCommand CreateCommand(string p_cmdstr, object paras)
+        protected DbCommand CreateCommand(string sql, object paras)
         {
             if (paras == null)
             {
-                return CreateCommand(p_cmdstr);
+                return CreateCommand(sql);
             }
             else if (paras is IDictionary<string, object>)
             {
-                return CreateCommand(p_cmdstr, (IDictionary<string, object>)paras);
+                return CreateCommand(sql, (IDictionary<string, object>)paras);
             }
             else if (paras is JObject)
             {
-                return CreateCommand(p_cmdstr, (JObject)paras);
+                return CreateCommand(sql, (JObject)paras);
             }
-            DbCommand cmd = CreateCommand(p_cmdstr);
+            DbCommand cmd = CreateCommand(sql);
             if (paras != null)
             {
                 Type t = paras.GetType();
@@ -144,19 +239,15 @@ namespace SharpSoft.Data
                 foreach (var pi in pis)
                 {
                     object value = pi.GetValue(paras);
-                    string name = pi.Name;
-                    DbParameter para = cmd.CreateParameter();
-                    string pname = "@" + name;
-                    para.ParameterName = pname;
-                    para.Value = value;
-                    cmd.Parameters.Add(para);
+                    string pname = pi.Name;
+                    cmd.Parameters.Add(processParameter(cmd, pname, value));
                 }
             }
             return cmd;
         }
-        protected DbCommand CreateCommand(string p_cmdstr, JObject paras)
+        protected DbCommand CreateCommand(string sql, JObject paras)
         {
-            DbCommand cmd = CreateCommand(p_cmdstr);
+            DbCommand cmd = CreateCommand(sql);
             if (paras != null)
             {
 
@@ -169,12 +260,8 @@ namespace SharpSoft.Data
                     {
                         value = jvalue.ToObject(typeof(object));
                     }
-                    string name = pi.Name;
-                    DbParameter para = cmd.CreateParameter();
-                    string pname = "@" + name;
-                    para.ParameterName = pname;
-                    para.Value = value;
-                    cmd.Parameters.Add(para);
+                    string pname = pi.Name;
+                    cmd.Parameters.Add(processParameter(cmd, pname, value));
                 }
             }
             return cmd;
@@ -186,6 +273,10 @@ namespace SharpSoft.Data
         /// <returns></returns>
         public TransactionWarpper BeginTransaction(IsolationLevel isolationLevel = IsolationLevel.Unspecified)
         {
+            if (conn.State != ConnectionState.Open)
+            {
+                conn.Open();
+            }
             DbTransaction tran = conn.BeginTransaction(isolationLevel);
             transaction = tran;
             TransactionWarpper warpper = new TransactionWarpper(tran, delegate { transaction = null; });
@@ -208,9 +299,14 @@ namespace SharpSoft.Data
         #endregion
 
         #region 查询
-        public int ExecuteNonQuery(string p_cmdstr, object paras = null)
+        public int ExecuteNonQuery(GSQLCommandText gsql, object paras = null)
         {
-            var cmd = CreateCommand(p_cmdstr, paras);
+            return ExecuteNonQuery(gsql.ToSql(sqlTextGenerator), paras);
+        }
+        [System.Diagnostics.DebuggerStepThrough]
+        public int ExecuteNonQuery(SQLCommandText sql, object paras = null)
+        {
+            var cmd = CreateCommand(sql, paras);
             Open();
             int result = cmd.ExecuteNonQuery();
 
@@ -221,9 +317,32 @@ namespace SharpSoft.Data
             return result;
         }
 
-        public object ExecuteScalar(string p_cmdstr, object paras = null)
+        public T ExecuteScalar<T>(GSQLCommandText gsql, object paras = null)
         {
-            var cmd = CreateCommand(p_cmdstr, paras);
+            var obj = ExecuteScalar(gsql.ToSql(sqlTextGenerator), paras);
+            return SqlUtility.ConvertToTargetType<T>(obj);
+        }
+        public T ExecuteScalar<T>(SQLCommandText sql, object paras = null)
+        {
+            var cmd = CreateCommand(sql, paras);
+            Open();
+            object result = cmd.ExecuteScalar();
+
+            if (ClosWhenExecuted)
+            {
+                Close();
+            }
+            var obj = SqlObject2CLIObject(result);
+            return SqlUtility.ConvertToTargetType<T>(obj);
+        }
+        public object ExecuteScalar(GSQLCommandText gsql, object paras = null)
+        {
+            return ExecuteScalar(gsql.ToSql(sqlTextGenerator), paras);
+        }
+        [System.Diagnostics.DebuggerStepThrough]
+        public object ExecuteScalar(SQLCommandText sql, object paras = null)
+        {
+            var cmd = CreateCommand(sql, paras);
             Open();
             object result = cmd.ExecuteScalar();
 
@@ -235,9 +354,14 @@ namespace SharpSoft.Data
         }
 
 
-        public DbDataReader ExecuteReader(string p_cmdstr, object paras = null)
+        public DbDataReader ExecuteReader(GSQLCommandText gsql, object paras = null)
         {
-            var cmd = CreateCommand(p_cmdstr, paras);
+            return ExecuteReader(gsql.ToSql(sqlTextGenerator), paras);
+        }
+        [System.Diagnostics.DebuggerStepThrough]
+        public DbDataReader ExecuteReader(SQLCommandText sql, object paras = null)
+        {
+            var cmd = CreateCommand(sql, paras);
             Open();
             DbDataReader reader = cmd.ExecuteReader();
 
@@ -248,26 +372,90 @@ namespace SharpSoft.Data
             return reader;
 
         }
-        public int ExcuteInt32(string p_cmdstr, object paras = null)
+        public int ExecuteInt32(GSQLCommandText gsql, object paras = null)
         {
-            var obj = ExecuteScalar(p_cmdstr, paras);
+            return ExecuteInt32(gsql.ToSql(sqlTextGenerator), paras);
+        }
+        public int ExecuteInt32(SQLCommandText sql, object paras = null)
+        {
+            var obj = ExecuteScalar(sql, paras);
             return Convert.ToInt32(obj);
         }
-        public string ExcuteString(string p_cmdstr, object paras = null)
+        public string ExecuteString(GSQLCommandText gsql, object paras = null)
         {
-            var obj = ExecuteScalar(p_cmdstr, paras);
+            return ExecuteString(gsql.ToSql(sqlTextGenerator), paras);
+        }
+        public string ExecuteString(SQLCommandText sql, object paras = null)
+        {
+            var obj = ExecuteScalar(sql, paras);
             return Convert.ToString(obj);
+        }
+        public JArray ExecuteJArray(GSQLCommandText gsql, object paras = null)
+        {
+            return ExecuteJArray(gsql.ToSql(sqlTextGenerator), paras);
+        }
+
+        public T[] ExecuteArray<T>(GSQLCommandText gsql, object paras = null)
+        {
+            using (DbDataReader reader = ExecuteReader(gsql, paras))
+            {
+                var colcount = reader.FieldCount;
+                List<T> l = new List<T>(colcount);
+                while (reader.Read())
+                {
+
+                    object value = reader.GetValue(0);
+                    value = SqlObject2CLIObject(value);
+                    var tval = SqlUtility.ConvertToTargetType<T>(value);
+                    l.Add(tval);
+                }
+                return l.ToArray();
+            }
+        }
+        public Dictionary<TKey, TValue> ExecuteDictionary<TKey, TValue>(GSQLCommandText gsql, string key, string value, object paras = null)
+        {
+            using (DbDataReader reader = ExecuteReader(gsql, paras))
+            {
+                var colcount = reader.FieldCount;
+                Dictionary<TKey, TValue> dic = new Dictionary<TKey, TValue>(colcount);
+                int keyindex = 0;
+                int valueindex = 0;
+                for (int i = 0; i < colcount; i++)
+                {
+                    string colname = reader.GetName(i);
+                    if (key == colname)
+                    {
+                        keyindex = i;
+                    }
+                    else if (value == colname)
+                    {
+                        valueindex = i;
+                    }
+                }
+                while (reader.Read())
+                {
+
+                    object keyv = reader.GetValue(keyindex);
+                    object valuev = reader.GetValue(valueindex);
+                    keyv = SqlObject2CLIObject(keyv);
+                    valuev = SqlObject2CLIObject(valuev);
+                    TKey tkeyv = SqlUtility.ConvertToTargetType<TKey>(keyv);
+                    TValue tvaluev = SqlUtility.ConvertToTargetType<TValue>(valuev);
+                    dic.Add(tkeyv, tvaluev);
+                }
+                return dic;
+            }
         }
         /// <summary>
         /// 执行SQL语句，将查询结果作为JSON数组返回。
         /// </summary>
-        /// <param name="p_cmdstr"></param>
+        /// <param name="sql"></param>
         /// <param name="paras"></param>
         /// <returns></returns>
-        public JArray ExecuteJArray(string p_cmdstr, object paras = null)
+        public JArray ExecuteJArray(SQLCommandText sql, object paras = null)
         {
             JArray array = new JArray();
-            using (DbDataReader reader = ExecuteReader(p_cmdstr, paras))
+            using (DbDataReader reader = ExecuteReader(sql, paras))
             {
                 var colcount = reader.FieldCount;
                 while (reader.Read())
@@ -285,15 +473,25 @@ namespace SharpSoft.Data
                 return array;
             }
         }
+        public JObject ExecuteJObject(GSQLCommandText gsql, object paras = null)
+        {
+            return ExecuteJObject(gsql.ToSql(sqlTextGenerator), paras);
+        }
+        public T ExecuteObject<T>(GSQLCommandText gsql, object paras = null)
+        {
+            var jobj = ExecuteJObject(gsql, paras);
+            string sertext = JsonConvert.SerializeObject(jobj);
+            return JsonConvert.DeserializeObject<T>(sertext);
+        }
         /// <summary>
         /// 执行SQL语句，将查询结果作为JSON对象返回。
         /// </summary>
-        /// <param name="p_cmdstr"></param>
+        /// <param name="sql"></param>
         /// <param name="paras"></param>
         /// <returns></returns>
-        public JObject ExecuteJObject(string p_cmdstr, object paras = null)
+        public JObject ExecuteJObject(SQLCommandText sql, object paras = null)
         {
-            using (DbDataReader reader = ExecuteReader(p_cmdstr, paras))
+            using (DbDataReader reader = ExecuteReader(sql, paras))
             {
                 var colcount = reader.FieldCount;
                 while (reader.Read())
@@ -312,5 +510,53 @@ namespace SharpSoft.Data
             }
         }
         #endregion
+
+        #region 查询扩展
+        /// <summary>
+        /// 分页查询
+        /// </summary>
+        /// <param name="select"></param>
+        /// <returns></returns>
+        public virtual SqlPagination ExecutePagination(GSQLCommandText select, int onepagerowscount, int curpageindex, object paras = null)
+        {
+            //var gs = GSqlSetting.Default;
+            //GSQLParser p1 = new GSQLParser((string)select);
+            //var sel = p1.ReadSelect();
+            //var selcount = $"select count(1) from ({GSqlSetting.Default.Select(sel)}) AS TEMP;";
+            //var count = ExecuteInt32((GSQLCommandText)selcount, paras);
+            //var pagecount = (int)Math.Ceiling((decimal)count / (decimal)onepagerowscount);
+            //int limitstart = curpageindex * onepagerowscount;
+            //sel.Limit = new LimitClause() { Offset = limitstart, Length = onepagerowscount };
+            //SqlPagination pagi = new SqlPagination() { CurrentPage = curpageindex, PageCount = pagecount };
+            //pagi.PageData = ExecuteJArray((GSQLCommandText)GSqlSetting.Default.Select(sel), paras);
+            //return pagi;
+            return null;
+        }
+        /// <summary>
+        /// 查询结果是否存在
+        /// </summary>
+        /// <param name="select"></param>
+        /// <param name="paras"></param>
+        /// <returns></returns>
+        public virtual bool ExecuteExists(GSQLCommandText select, object paras = null)
+        {
+            //GSQLParser p1 = new GSQLParser((string)select);
+            //var sel = p1.ReadSelect();
+            //sel.Fields = new QueryFieldList();
+            //var field = new Function() { Name = "COUNT", Arguments = new ExpressionList() { Args = new List<IValue>() { new Constant() { Type = ConstantType.Numeric, Content = "1" } } } };
+            //sel.Fields.Add(field);
+            //int count = ExecuteInt32((GSQLCommandText)GSqlSetting.Default.Select(sel), paras);
+            //return count >= 1;
+            return false;
+        }
+
+        #endregion
+
+        public abstract Database Clone();
+        public void Dispose()
+        {
+            this.Close();
+            this.conn?.Dispose();
+        }
     }
 }
